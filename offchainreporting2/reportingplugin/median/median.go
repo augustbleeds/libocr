@@ -228,12 +228,15 @@ var _ types.ReportingPluginFactory = NumericalMedianFactory{}
 const maxObservationLength = 4 /* timestamp */ +
 	byteWidth /* observation */ +
 	byteWidth /* juelsPerFeeCoin */ +
+	byteWidth /* gasPrice */ +
 	16 /* overapprox. of protobuf overhead */
 
 type NumericalMedianFactory struct {
 	ContractTransmitter       MedianContract
 	DataSource                DataSource
 	JuelsPerFeeCoinDataSource DataSource
+	// Observe() returns non-nil value if chain supports a readable tx.gasPrice during execution
+	GasPriceSubunitDataSource DataSource
 	Logger                    commontypes.Logger
 	OnchainConfigCodec        OnchainConfigCodec
 	ReportCodec               ReportCodec
@@ -267,6 +270,7 @@ func (fac NumericalMedianFactory) NewReportingPlugin(configuration types.Reporti
 			fac.ContractTransmitter,
 			fac.DataSource,
 			fac.JuelsPerFeeCoinDataSource,
+			fac.GasPriceSubunitDataSource,
 			logger,
 			fac.ReportCodec,
 
@@ -313,6 +317,7 @@ type numericalMedian struct {
 	contractTransmitter       MedianContract
 	dataSource                DataSource
 	juelsPerFeeCoinDataSource DataSource
+	gasPriceSubunitDataSource DataSource
 	logger                    loghelper.LoggerWithContext
 	reportCodec               ReportCodec
 
@@ -334,11 +339,17 @@ func (nm *numericalMedian) Observation(ctx context.Context, repts types.ReportTi
 
 	observe := func(dataSource DataSource, name string) ([]byte, error) {
 		value, err := dataSource.Observe(ctx, repts)
+
 		if err != nil {
 			return nil, fmt.Errorf("%v.Observe returned an error: %w", name, err)
 		}
 		if value == nil {
-			return nil, fmt.Errorf("%v.Observe returned nil big.Int which should never happen", name)
+			// nil is a valid value (represents no-op) for this one data source
+			if name == "GasPriceSubunitDataSource" {
+				return nil, nil
+			}
+			// otherwise, no other data source should return nil
+			return nil, fmt.Errorf("%v.Observe returned unexpected nil big.Int", name)
 		}
 		encoded, err := EncodeValue(value)
 		if err != nil {
@@ -347,17 +358,20 @@ func (nm *numericalMedian) Observation(ctx context.Context, repts types.ReportTi
 		return encoded, nil
 	}
 	var subs subprocesses.Subprocesses
-	var value, juelsPerFeeCoin []byte
-	var valueErr, juelsPerFeeCoinErr error
+	var value, juelsPerFeeCoin, gasPrice []byte
+	var valueErr, juelsPerFeeCoinErr, gasPriceErr error
 	subs.Go(func() {
 		value, valueErr = observe(nm.dataSource, "DataSource")
 	})
 	subs.Go(func() {
 		juelsPerFeeCoin, juelsPerFeeCoinErr = observe(nm.juelsPerFeeCoinDataSource, "JuelsPerFeeCoinDataSource")
 	})
+	subs.Go(func() {
+		gasPrice, gasPriceErr = observe(nm.gasPriceSubunitDataSource, "GasPriceSubunitDataSource")
+	})
 	subs.Wait()
 
-	err := multierr.Combine(valueErr, juelsPerFeeCoinErr)
+	err := multierr.Combine(valueErr, juelsPerFeeCoinErr, gasPriceErr)
 	if err != nil {
 		return nil, fmt.Errorf("error in Observation: %w", err)
 	}
@@ -371,6 +385,7 @@ func (nm *numericalMedian) Observation(ctx context.Context, repts types.ReportTi
 		uint32(time.Now().Unix()),
 		value,
 		juelsPerFeeCoin,
+		gasPrice,
 	})
 }
 
@@ -378,6 +393,7 @@ type ParsedAttributedObservation struct {
 	Timestamp       uint32
 	Value           *big.Int
 	JuelsPerFeeCoin *big.Int
+	GasPrice        *big.Int
 	Observer        commontypes.OracleID
 }
 
@@ -394,10 +410,18 @@ func parseAttributedObservation(ao types.AttributedObservation) (ParsedAttribute
 	if err != nil {
 		return ParsedAttributedObservation{}, fmt.Errorf("attributed observation with juelsPerFeeCoin that cannot be converted to big.Int: %w", err)
 	}
+	var gasPrice *big.Int
+	if len(observationProto.GasPrice) != 0 {
+		gasPrice, err = DecodeValue(observationProto.GasPrice)
+		if err != nil {
+			return ParsedAttributedObservation{}, fmt.Errorf("attributed observation with gasPrice that cannot be converted to big.Int: %w", err)
+		}
+	}
 	return ParsedAttributedObservation{
 		observationProto.Timestamp,
 		value,
 		juelsPerFeeCoin,
+		gasPrice,
 		ao.Observer,
 	}, nil
 }
