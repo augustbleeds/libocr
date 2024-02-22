@@ -124,13 +124,14 @@ func RunManagedOCR3Oracle[RI any](
 				return
 			}
 
-			lims, err := limits.OCR3Limits(sharedConfig.PublicConfig, reportingPluginInfo.Limits, onchainKeyring.MaxSignatureLength())
+			maxSigLen := onchainKeyring.MaxSignatureLength()
+			lims, err := limits.OCR3Limits(sharedConfig.PublicConfig, reportingPluginInfo.Limits, maxSigLen)
 			if err != nil {
 				logger.Error("ManagedOCR3Oracle: error during limits", commontypes.LogFields{
 					"error":                 err,
 					"publicConfig":          sharedConfig.PublicConfig,
 					"reportingPluginLimits": reportingPluginInfo.Limits,
-					"maxSigLen":             onchainKeyring.MaxSignatureLength(),
+					"maxSigLen":             maxSigLen,
 				})
 				return
 			}
@@ -156,7 +157,7 @@ func RunManagedOCR3Oracle[RI any](
 				chTelemetrySend,
 				sharedConfig.ConfigDigest,
 				binNetEndpoint,
-				onchainKeyring.MaxSignatureLength(),
+				maxSigLen,
 				childLogger,
 				reportingPluginInfo.Limits,
 				sharedConfig.N(),

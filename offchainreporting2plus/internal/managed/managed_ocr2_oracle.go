@@ -126,13 +126,14 @@ func RunManagedOCR2Oracle(
 				return
 			}
 
-			lims, err := limits.OCR2Limits(sharedConfig.PublicConfig, reportingPluginInfo.Limits, onchainKeyring.MaxSignatureLength())
+			maxSigLen := onchainKeyring.MaxSignatureLength()
+			lims, err := limits.OCR2Limits(sharedConfig.PublicConfig, reportingPluginInfo.Limits, maxSigLen)
 			if err != nil {
 				logger.Error("ManagedOCR2Oracle: error during limits", commontypes.LogFields{
 					"error":               err,
 					"publicConfig":        sharedConfig.PublicConfig,
 					"reportingPluginInfo": reportingPluginInfo,
-					"maxSigLen":           onchainKeyring.MaxSignatureLength(),
+					"maxSigLen":           maxSigLen,
 				})
 				return
 			}
